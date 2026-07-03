@@ -5,7 +5,7 @@ import com.framework.annotation.urlMapping;
 
 @Controller("mg.itu.4231.annotation.Controller")
 public class TestController2 {
-    @urlMapping("/test2")
+    @urlMapping("/test3")
     public void tsisy(){
         
     }

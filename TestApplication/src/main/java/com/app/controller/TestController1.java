@@ -10,6 +10,11 @@ public class TestController1 {
 
     }
 
+    @urlMapping(value = "/test1", method = "POST")
+    public String test1Post(){
+        return "POST test1";
+    }
+
     @urlMapping("/accueil")
     public void accueil(){
 
