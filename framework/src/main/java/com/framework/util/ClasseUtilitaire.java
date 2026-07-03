@@ -1,6 +1,7 @@
 package com.framework.util;
 import com.framework.annotation.Controller;
 import com.framework.annotation.urlMapping;
+import com.framework.mapping.UrlMethode;
 
 import java.util.List ;
 import java.util.ArrayList;
@@ -34,8 +35,8 @@ public class ClasseUtilitaire {
         return liste ;
     }
 
-    public Map<String, String> findUrlMappings(String annotationValue, String packageClasse) {
-        Map<String, String> mappings = new LinkedHashMap<>();
+    public Map<UrlMethode, String> findUrlMappings(String annotationValue, String packageClasse) {
+        Map<UrlMethode, String> mappings = new LinkedHashMap<>();
 
         Reflections reflections = new Reflections(packageClasse, Scanners.SubTypes.filterResultsBy(s -> true));
         Set<Class<?>> toutesLesClasses = reflections.getSubTypesOf(Object.class);
@@ -49,7 +50,17 @@ public class ClasseUtilitaire {
                     for (Method method : clazz.getDeclaredMethods()) {
                         if (method.isAnnotationPresent(urlMapping.class)) {
                             urlMapping mapping = method.getAnnotation(urlMapping.class);
-                            mappings.put(mapping.value(), clazz.getName() + "#" + method.getName());
+                            UrlMethode urlMethode = new UrlMethode(mapping.value(), mapping.method());
+                            String methodeMapping = clazz.getName() + "#" + method.getName();
+
+                            if (mappings.containsKey(urlMethode)) {
+                                throw new RuntimeException(
+                                    "Route dupliquee : " + urlMethode + " existe deja pour " + mappings.get(urlMethode)
+                                        + ", impossible d'ajouter " + methodeMapping
+                                );
+                            }
+
+                            mappings.put(urlMethode, methodeMapping);
                         }
                     }
                 }
