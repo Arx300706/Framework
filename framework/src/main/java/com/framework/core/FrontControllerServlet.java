@@ -4,33 +4,44 @@ import java.io.*;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.List ;
 import java.util.ArrayList ;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import com.framework.util.ClasseUtilitaire ;
 import com.framework.mapping.UrlMethode;
+import com.framework.util.Util;
+
+import org.springframework.web.context.WebApplicationContext;
 
 
 public class FrontControllerServlet extends HttpServlet {
-    ClasseUtilitaire util = new ClasseUtilitaire() ;
     List<String> listNomController = new ArrayList<>() ;
     Map<UrlMethode, String> urlMappings = new LinkedHashMap<>() ;
+    WebApplicationContext springContext;
 
+    @SuppressWarnings("unchecked")
     public void init() throws ServletException {
-
         try {
             super.init();
-            System.out.println("Démarrage du scan...");
-            String annotationValue = "mg.itu.4231.annotation.Controller" ;
-            String packageClasse = getServletConfig().getInitParameter("controller-package");
-            if (packageClasse == null || packageClasse.trim().isEmpty()) {
-                packageClasse = "com.app.controller";
+
+            ServletContext context = getServletContext();
+            Object controllersAttribute = context.getAttribute(FrontControllerListner.CONTROLLERS_ATTRIBUTE);
+            Object mappingsAttribute = context.getAttribute(FrontControllerListner.URL_MAPPINGS_ATTRIBUTE);
+            Object springContextAttribute = context.getAttribute("springContext");
+
+            if (controllersAttribute instanceof List<?>) {
+                listNomController = (List<String>) controllersAttribute;
             }
 
-            listNomController = util.findController(annotationValue,packageClasse) ;
-            initMapping(annotationValue, packageClasse);
+            if (mappingsAttribute instanceof Map<?, ?>) {
+                urlMappings = (Map<UrlMethode, String>) mappingsAttribute;
+            }
+
+            if (springContextAttribute instanceof WebApplicationContext) {
+                springContext = (WebApplicationContext) springContextAttribute;
+            }
 
         } catch (Exception e) {
             e.printStackTrace(); 
@@ -51,13 +62,8 @@ public class FrontControllerServlet extends HttpServlet {
     
     }
 
-    private void initMapping(String annotationValue, String packageClasse) {
-        urlMappings = util.findUrlMappings(annotationValue, packageClasse) ;
-    }
-
     public void processRequest(HttpServletRequest req, HttpServletResponse res)
         throws ServletException , IOException {
-        res.setContentType("text/plain");
 
         String url = req.getRequestURI();
         String contextPath = req.getContextPath();
@@ -83,17 +89,16 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         try {
-            Object resultat = invoquerMethode(mappingCourant);
+            ModelAndView modelAndView = invoquerMethode(mappingCourant);
+            addArgToRequest(req, modelAndView.getData());
+            dispatch(req, res, modelAndView.getView());
 
-            if (resultat != null) {
-                res.getWriter().println(resultat);
-            }
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'invocation de la methode : " + e.getMessage(), e);
         }
     }
 
-    private Object invoquerMethode(String mappingCourant) throws Exception {
+    private ModelAndView invoquerMethode(String mappingCourant) throws Exception {
         String[] elements = mappingCourant.split("#", 2);
         if (elements.length != 2) {
             throw new IllegalArgumentException("Mapping invalide : " + mappingCourant);
@@ -104,9 +109,66 @@ public class FrontControllerServlet extends HttpServlet {
 
         Class<?> classeController = Class.forName(nomClasse);
         Object instanceController = classeController.getDeclaredConstructor().newInstance();
-        Method methode = classeController.getDeclaredMethod(nomMethode);
+        Method methode = trouverMethode(classeController, nomMethode);
+
+        if (!ModelAndView.class.isAssignableFrom(methode.getReturnType())) {
+            throw new IllegalArgumentException(
+                "La methode " + mappingCourant + " doit retourner " + ModelAndView.class.getName()
+            );
+        }
+
         methode.setAccessible(true);
 
-        return methode.invoke(instanceController);
+        Object resultat;
+        if (Util.haveParameter(methode, WebApplicationContext.class)) {
+            if (springContext == null) {
+                throw new IllegalStateException("Pas de springContext dans le ServletContext");
+            }
+
+            resultat = methode.invoke(instanceController, springContext);
+        } else {
+            resultat = methode.invoke(instanceController);
+        }
+
+        if (resultat == null) {
+            throw new IllegalArgumentException("La methode " + mappingCourant + " a retourne null");
+        }
+
+        return (ModelAndView) resultat;
+    }
+
+    private Method trouverMethode(Class<?> classeController, String nomMethode) throws NoSuchMethodException {
+        for (Method methode : classeController.getDeclaredMethods()) {
+            if (methode.getName().equals(nomMethode)
+                && (methode.getParameterCount() == 0 || Util.haveParameter(methode, WebApplicationContext.class))) {
+                return methode;
+            }
+        }
+
+        throw new NoSuchMethodException(classeController.getName() + "#" + nomMethode);
+    }
+
+    private void addArgToRequest(HttpServletRequest req, Map<String, Object> data) {
+        for (Map.Entry<String, Object> entry : safeData(data).entrySet()) {
+            req.setAttribute(entry.getKey(), entry.getValue());
+        }
+    }
+
+    private Map<String, Object> safeData(Map<String, Object> data) {
+        return data == null ? Collections.emptyMap() : data;
+    }
+
+    private void dispatch(HttpServletRequest req, HttpServletResponse res, String view)
+        throws ServletException, IOException {
+        if (view == null || view.trim().isEmpty()) {
+            throw new IllegalArgumentException("La vue du ModelAndView est vide");
+        }
+
+        RequestDispatcher dispatcher = req.getRequestDispatcher(view);
+        if (dispatcher == null) {
+            throw new IllegalArgumentException("Aucun dispatcher trouve pour la vue : " + view);
+        }
+
+        dispatcher.forward(req, res);
     }
 }
