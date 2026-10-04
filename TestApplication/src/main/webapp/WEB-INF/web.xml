@@ -7,6 +7,15 @@
   version="5.0"
   metadata-complete="true">
 
+    <context-param>
+        <param-name>controller-package</param-name>
+        <param-value>com.app.controller</param-value>
+    </context-param>
+
+    <listener>
+        <listener-class>com.framework.core.FrontControllerListner</listener-class>
+    </listener>
+
     <servlet>
         <servlet-name>FrontControllerServlet</servlet-name>
         <servlet-class>com.framework.core.FrontControllerServlet</servlet-class>
@@ -18,7 +27,7 @@
 
     <servlet-mapping>
         <servlet-name>FrontControllerServlet</servlet-name>
-        <url-pattern>/*</url-pattern>
+        <url-pattern>/</url-pattern>
     </servlet-mapping>
 
 </web-app>

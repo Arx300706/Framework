@@ -10,6 +10,8 @@ import java.util.ArrayList ;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.framework.annotation.RestApi;
 import com.framework.mapping.UrlMethode;
 import com.framework.util.Util;
 
@@ -17,6 +19,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 
 public class FrontControllerServlet extends HttpServlet {
+    private final ObjectMapper jsonMapper = new ObjectMapper();
     List<String> listNomController = new ArrayList<>() ;
     Map<UrlMethode, String> urlMappings = new LinkedHashMap<>() ;
     WebApplicationContext springContext;
@@ -89,16 +92,23 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         try {
-            ModelAndView modelAndView = invoquerMethode(mappingCourant);
-            addArgToRequest(req, modelAndView.getData());
-            dispatch(req, res, modelAndView.getView());
+            Method methode = trouverMethode(mappingCourant);
+            Object resultat = invoquerMethode(methode);
+
+            if (methode.isAnnotationPresent(RestApi.class)) {
+                writeJson(res, resultat);
+            } else {
+                ModelAndView modelAndView = (ModelAndView) resultat;
+                addArgToRequest(req, modelAndView.getData());
+                dispatch(req, res, modelAndView.getView());
+            }
 
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'invocation de la methode : " + e.getMessage(), e);
         }
     }
 
-    private ModelAndView invoquerMethode(String mappingCourant) throws Exception {
+    private Method trouverMethode(String mappingCourant) throws ClassNotFoundException, NoSuchMethodException {
         String[] elements = mappingCourant.split("#", 2);
         if (elements.length != 2) {
             throw new IllegalArgumentException("Mapping invalide : " + mappingCourant);
@@ -108,15 +118,20 @@ public class FrontControllerServlet extends HttpServlet {
         String nomMethode = elements[1];
 
         Class<?> classeController = Class.forName(nomClasse);
-        Object instanceController = classeController.getDeclaredConstructor().newInstance();
-        Method methode = trouverMethode(classeController, nomMethode);
+        return trouverMethode(classeController, nomMethode);
+    }
 
-        if (!ModelAndView.class.isAssignableFrom(methode.getReturnType())) {
+    private Object invoquerMethode(Method methode) throws Exception {
+        boolean restApi = methode.isAnnotationPresent(RestApi.class);
+        String mappingCourant = methode.getDeclaringClass().getName() + "#" + methode.getName();
+
+        if (!restApi && !ModelAndView.class.isAssignableFrom(methode.getReturnType())) {
             throw new IllegalArgumentException(
                 "La methode " + mappingCourant + " doit retourner " + ModelAndView.class.getName()
             );
         }
 
+        Object instanceController = methode.getDeclaringClass().getDeclaredConstructor().newInstance();
         methode.setAccessible(true);
 
         Object resultat;
@@ -130,11 +145,21 @@ public class FrontControllerServlet extends HttpServlet {
             resultat = methode.invoke(instanceController);
         }
 
-        if (resultat == null) {
+        if (!restApi && resultat == null) {
             throw new IllegalArgumentException("La methode " + mappingCourant + " a retourne null");
         }
 
-        return (ModelAndView) resultat;
+        return resultat;
+    }
+
+    private void writeJson(HttpServletResponse res, Object resultat) throws IOException {
+        // Un ModelAndView annote expose uniquement ses donnees, sans ouvrir sa vue.
+        Object data = resultat instanceof ModelAndView ? ((ModelAndView) resultat).getData() : resultat;
+        String json = jsonMapper.writeValueAsString(data);
+
+        res.setContentType("application/json");
+        res.setCharacterEncoding("UTF-8");
+        res.getWriter().write(json);
     }
 
     private Method trouverMethode(Class<?> classeController, String nomMethode) throws NoSuchMethodException {
