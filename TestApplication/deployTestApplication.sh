@@ -36,7 +36,7 @@ mkdir -p "$BUILD_DIR/WEB-INF/lib"
 
 # Compilation des fichiers Java en utilisant les jars dans WEB-INF/lib (framework.jar + éventuels ...)
 find "$SRC_DIR" -name "*.java" > "$BUILD_DIR/sources.txt"
-javac -cp "$SERVLET_API_JAR" -d "$BUILD_DIR/WEB-INF/classes" @"$BUILD_DIR/sources.txt"
+javac -parameters -cp "$SERVLET_API_JAR" -d "$BUILD_DIR/WEB-INF/classes" @"$BUILD_DIR/sources.txt"
 rm "$BUILD_DIR/sources.txt"
 
 # Copier les fichiers web (web.xml, JSP, etc.) et les libs
@@ -74,7 +74,8 @@ if [ "$APP_NAME" = "ROOT" ]; then
   echo "URL à ouvrir: http://localhost:$TOMCAT_PORT/"
 else
   echo "URL à ouvrir: http://localhost:$TOMCAT_PORT/$APP_NAME/"
-  echo "Exemple: http://localhost:$TOMCAT_PORT/$APP_NAME/test2"
+  echo "Sprint 6 (JSON): http://localhost:$TOMCAT_PORT/$APP_NAME/test1"
+  echo "Liste des personnes (JSON): http://localhost:$TOMCAT_PORT/$APP_NAME/liste"
 fi
 echo "Si l'ancienne version reste affichee, redemarre ton Tomcat local:"
 echo "$DEFAULT_TOMCAT_HOME/bin/shutdown.sh && $DEFAULT_TOMCAT_HOME/bin/startup.sh"
