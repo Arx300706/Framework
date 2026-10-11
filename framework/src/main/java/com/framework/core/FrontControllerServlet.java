@@ -3,7 +3,10 @@ package com.framework.core;
 import java.io.*;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.Collections;
 import java.util.List ;
 import java.util.ArrayList ;
@@ -11,9 +14,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.framework.annotation.ApiRest;
+import com.framework.annotation.Json;
 import com.framework.annotation.RestApi;
 import com.framework.mapping.UrlMethode;
-import com.framework.util.Util;
 
 import org.springframework.web.context.WebApplicationContext;
 
@@ -93,14 +97,16 @@ public class FrontControllerServlet extends HttpServlet {
 
         try {
             Method methode = trouverMethode(mappingCourant);
-            Object resultat = invoquerMethode(methode);
+            Object resultat = invoquerMethode(methode, req);
 
-            if (methode.isAnnotationPresent(RestApi.class)) {
+            if (isJsonResponse(methode)) {
                 writeJson(res, resultat);
-            } else {
+            } else if (resultat instanceof ModelAndView) {
                 ModelAndView modelAndView = (ModelAndView) resultat;
                 addArgToRequest(req, modelAndView.getData());
                 dispatch(req, res, modelAndView.getView());
+            } else {
+                writeText(res, resultat);
             }
 
         } catch (Exception e) {
@@ -121,35 +127,217 @@ public class FrontControllerServlet extends HttpServlet {
         return trouverMethode(classeController, nomMethode);
     }
 
-    private Object invoquerMethode(Method methode) throws Exception {
-        boolean restApi = methode.isAnnotationPresent(RestApi.class);
+    private Object invoquerMethode(Method methode, HttpServletRequest req) throws Exception {
+        boolean jsonResponse = isJsonResponse(methode);
         String mappingCourant = methode.getDeclaringClass().getName() + "#" + methode.getName();
 
-        if (!restApi && !ModelAndView.class.isAssignableFrom(methode.getReturnType())) {
+        if (!jsonResponse
+            && !ModelAndView.class.isAssignableFrom(methode.getReturnType())
+            && !String.class.isAssignableFrom(methode.getReturnType())) {
             throw new IllegalArgumentException(
                 "La methode " + mappingCourant + " doit retourner " + ModelAndView.class.getName()
+                    + " ou " + String.class.getName()
             );
         }
 
         Object instanceController = methode.getDeclaringClass().getDeclaredConstructor().newInstance();
         methode.setAccessible(true);
+        Object resultat = methode.invoke(instanceController, construireArguments(methode, req));
 
-        Object resultat;
-        if (Util.haveParameter(methode, WebApplicationContext.class)) {
-            if (springContext == null) {
-                throw new IllegalStateException("Pas de springContext dans le ServletContext");
-            }
-
-            resultat = methode.invoke(instanceController, springContext);
-        } else {
-            resultat = methode.invoke(instanceController);
-        }
-
-        if (!restApi && resultat == null) {
+        if (!jsonResponse && resultat == null) {
             throw new IllegalArgumentException("La methode " + mappingCourant + " a retourne null");
         }
 
         return resultat;
+    }
+
+    private boolean isJsonResponse(Method methode) {
+        return methode.isAnnotationPresent(Json.class)
+            || methode.isAnnotationPresent(RestApi.class)
+            || methode.isAnnotationPresent(ApiRest.class);
+    }
+
+    private Object[] construireArguments(Method methode, HttpServletRequest req) throws Exception {
+        Parameter[] parameters = methode.getParameters();
+        Object[] arguments = new Object[parameters.length];
+
+        for (int i = 0; i < parameters.length; i++) {
+            Parameter parameter = parameters[i];
+            Class<?> type = parameter.getType();
+
+            if (type.equals(WebApplicationContext.class)) {
+                if (springContext == null) {
+                    throw new IllegalStateException("Pas de springContext dans le ServletContext");
+                }
+                arguments[i] = springContext;
+            } else if (isSimpleType(type)) {
+                arguments[i] = convertirParametre(req.getParameter(parameter.getName()), type);
+            } else {
+                arguments[i] = construireObjet(type, req);
+            }
+        }
+
+        return arguments;
+    }
+
+    private Object construireObjet(Class<?> type, HttpServletRequest req) throws Exception {
+        Constructor<?> constructeur = meilleurConstructeur(type);
+
+        if (constructeur != null && constructeur.getParameterCount() > 0) {
+            constructeur.setAccessible(true);
+            return constructeur.newInstance(construireArgumentsConstructeur(constructeur, type, req));
+        }
+
+        Object instance = type.getDeclaredConstructor().newInstance();
+        remplirChamps(instance, req);
+        return instance;
+    }
+
+    private Constructor<?> meilleurConstructeur(Class<?> type) {
+        Constructor<?> meilleur = null;
+
+        for (Constructor<?> constructeur : type.getDeclaredConstructors()) {
+            if (constructeur.getParameterCount() == 0) {
+                continue;
+            }
+
+            if (meilleur == null || constructeur.getParameterCount() > meilleur.getParameterCount()) {
+                meilleur = constructeur;
+            }
+        }
+
+        return meilleur;
+    }
+
+    private Object[] construireArgumentsConstructeur(Constructor<?> constructeur, Class<?> type, HttpServletRequest req) {
+        Parameter[] parameters = constructeur.getParameters();
+        Field[] fields = type.getDeclaredFields();
+        Object[] arguments = new Object[parameters.length];
+
+        for (int i = 0; i < parameters.length; i++) {
+            String nomParametre = parameters[i].isNamePresent() ? parameters[i].getName() : nomChamp(fields, i);
+            arguments[i] = convertirParametre(req.getParameter(nomParametre), parameters[i].getType());
+        }
+
+        return arguments;
+    }
+
+    private String nomChamp(Field[] fields, int index) {
+        int position = 0;
+
+        for (Field field : fields) {
+            if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                if (position == index) {
+                    return field.getName();
+                }
+                position++;
+            }
+        }
+
+        return "arg" + index;
+    }
+
+    private void remplirChamps(Object instance, HttpServletRequest req) throws IllegalAccessException {
+        for (Field field : instance.getClass().getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+
+            String valeur = req.getParameter(field.getName());
+            if (valeur == null) {
+                continue;
+            }
+
+            field.setAccessible(true);
+            field.set(instance, convertirParametre(valeur, field.getType()));
+        }
+    }
+
+    private boolean isSimpleType(Class<?> type) {
+        return type.isPrimitive()
+            || type.equals(String.class)
+            || type.equals(Integer.class)
+            || type.equals(Long.class)
+            || type.equals(Double.class)
+            || type.equals(Float.class)
+            || type.equals(Boolean.class)
+            || type.equals(Short.class)
+            || type.equals(Byte.class)
+            || type.equals(Character.class);
+    }
+
+    private Object convertirParametre(String valeur, Class<?> type) {
+        if (valeur == null || valeur.trim().isEmpty()) {
+            return valeurParDefaut(type);
+        }
+
+        if (type.equals(String.class)) {
+            return valeur;
+        }
+        if (type.equals(int.class) || type.equals(Integer.class)) {
+            return Integer.valueOf(valeur);
+        }
+        if (type.equals(long.class) || type.equals(Long.class)) {
+            return Long.valueOf(valeur);
+        }
+        if (type.equals(double.class) || type.equals(Double.class)) {
+            return Double.valueOf(valeur);
+        }
+        if (type.equals(float.class) || type.equals(Float.class)) {
+            return Float.valueOf(valeur);
+        }
+        if (type.equals(boolean.class) || type.equals(Boolean.class)) {
+            return Boolean.valueOf(valeur);
+        }
+        if (type.equals(short.class) || type.equals(Short.class)) {
+            return Short.valueOf(valeur);
+        }
+        if (type.equals(byte.class) || type.equals(Byte.class)) {
+            return Byte.valueOf(valeur);
+        }
+        if (type.equals(char.class) || type.equals(Character.class)) {
+            return valeur.charAt(0);
+        }
+
+        throw new IllegalArgumentException("Type de parametre non supporte : " + type.getName());
+    }
+
+    private Object valeurParDefaut(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return null;
+        }
+        if (type.equals(boolean.class)) {
+            return false;
+        }
+        if (type.equals(char.class)) {
+            return '\0';
+        }
+        if (type.equals(byte.class)) {
+            return (byte) 0;
+        }
+        if (type.equals(short.class)) {
+            return (short) 0;
+        }
+        if (type.equals(int.class)) {
+            return 0;
+        }
+        if (type.equals(long.class)) {
+            return 0L;
+        }
+        if (type.equals(float.class)) {
+            return 0F;
+        }
+        if (type.equals(double.class)) {
+            return 0D;
+        }
+
+        return null;
+    }
+
+    private void writeText(HttpServletResponse res, Object resultat) throws IOException {
+        res.setContentType("text/plain");
+        res.setCharacterEncoding("UTF-8");
+        res.getWriter().write(resultat == null ? "" : String.valueOf(resultat));
     }
 
     private void writeJson(HttpServletResponse res, Object resultat) throws IOException {
@@ -164,8 +352,7 @@ public class FrontControllerServlet extends HttpServlet {
 
     private Method trouverMethode(Class<?> classeController, String nomMethode) throws NoSuchMethodException {
         for (Method methode : classeController.getDeclaredMethods()) {
-            if (methode.getName().equals(nomMethode)
-                && (methode.getParameterCount() == 0 || Util.haveParameter(methode, WebApplicationContext.class))) {
+            if (methode.getName().equals(nomMethode)) {
                 return methode;
             }
         }
