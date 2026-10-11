@@ -20,7 +20,7 @@ mkdir -p "$BUILD_DIR/lib"
 
 # Compilation des fichiers Java avec le JAR des Servlets
 find "$SRC_DIR" -name "*.java" > "$BUILD_DIR/sources.txt"
-javac -cp ".:$LIB_DIR/*" -d "$BUILD_DIR/classes" @"$BUILD_DIR/sources.txt"
+javac -parameters -cp ".:$LIB_DIR/*" -d "$BUILD_DIR/classes" @"$BUILD_DIR/sources.txt"
 rm "$BUILD_DIR/sources.txt"
 
 # Copier les jars de dépendances vers build/lib (reste inchangé)
