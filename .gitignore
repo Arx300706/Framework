@@ -1,0 +1,10 @@
+# Résultats de compilation et assemblage
+**/build/
+**/.smoke-test-build/
+*.class
+*.war
+/TestApplication/src/main/webapp/WEB-INF/lib/
+
+# Sauvegardes locales ; les dépendances dans */lib/*.jar restent versionnées.
+/.local-backups/
+*.log

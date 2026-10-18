@@ -1,0 +1,15 @@
+mon-app/
+│
+├── src/main/java/com/app/
+│   ├── controller/
+│   │   └── UserController.java
+│   ├── service/
+│   └── model/
+│
+├── src/main/webapp/
+│   ├── WEB-INF/
+│   │   ├── web.xml  
+│   │   └── views/
+│   │       └── users.jsp
+│
+└── pom.xml   → packaging = WAR

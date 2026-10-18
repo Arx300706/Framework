@@ -1,0 +1,19 @@
+mon-framework/
+│
+├── src/main/java/
+│   └── com.monframework/
+│       ├── core/              # cœur du framework (Dispatcher, annotations…)
+│       ├── controller/        # contrôleurs utilisateur
+│       ├── model/             # classes métier (POJO)
+│       ├── service/           # logique métier
+│       ├── repository/        # accès aux données (DAO)
+│       ├── util/              # outils (JSON, réflexion, etc.)
+│       └── config/            # configuration
+│
+├── src/main/webapp/
+│   ├── WEB-INF/
+│   │   ├── web.xml
+│   │   └── views/             # JSP / HTML
+│   └── assets/                # CSS, JS
+│
+└── pom.xml (si Maven)
