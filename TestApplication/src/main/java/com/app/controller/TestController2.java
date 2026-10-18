@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 package com.app.controller;
 
 import com.framework.annotation.Controller;
@@ -39,4 +40,13 @@ public class TestController2 {
         modelAndView.addAttribut("message", "Base initialisee avec " + repository.count() + " personnes");
         return modelAndView;
     }
+=======
+package main.java.com.app.controller;
+
+import com.framework.annotation.Controller;
+
+@Controller("mg.itu.4231.annotation.Controller")
+public class TestController2 {
+    
+>>>>>>> origin/ma-branche-feature
 }
