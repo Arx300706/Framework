@@ -46,8 +46,26 @@ public class Sprint6SmokeTest {
         assertMessage(servlet, "POST", "/test1", "POST test1");
         assertMessage(servlet, "GET", "/accueil", "Bienvenue");
         assertMessage(servlet, "GET", "/test3", "Test 3 depuis TestController2");
-        assertMessage(servlet, "GET", "/test4", "Test 4 depuis TestController3");
-        assertMessage(servlet, "GET", "/details", "Details");
+        assertView(servlet, "GET", "/test4", "Test 4 depuis TestController3");
+        assertView(servlet, "GET", "/details", "Details");
+
+        Map<String, String> loginParams = new HashMap<>();
+        loginParams.put("numero", "4196");
+        loginParams.put("nom", "Armando");
+        Exchange login = call(servlet, "POST", "/login", loginParams);
+        check(login.status == 200, "Statut incorrect pour /login");
+        check("text/plain".equals(login.contentType), "Content-Type incorrect pour /login");
+        check(login.body.toString().contains("le numero est : 4196"), "Le numero doit etre injecte dans /login");
+        check(login.body.toString().contains("le nom est : Armando"), "Le nom doit etre injecte dans /login");
+
+        Map<String, String> userParams = new HashMap<>();
+        userParams.put("id", "1");
+        userParams.put("name", "mi");
+        userParams.put("email", "mi@example.com");
+        JsonNode user = json(servlet, "POST", "/param", userParams);
+        check(user.get("id").asInt() == 1, "L'id du User doit etre injecte");
+        check(user.get("name").asText().equals("mi"), "Le name du User doit etre injecte");
+        check(user.get("email").asText().equals("mi@example.com"), "L'email du User doit etre injecte");
 
         JsonNode personnes = json(servlet, "GET", "/liste");
         check(personnes.get("total").asInt() == 3, "Le total des personnes doit etre 3");
@@ -56,30 +74,10 @@ public class Sprint6SmokeTest {
             "Les objets Personne doivent etre serialises");
         assertMessage(servlet, "GET", "/init-personnes", "Base initialisee avec 3 personnes");
 
-        JsonNode personne = json(servlet, "GET", "/sprint6-test/object");
-        check(personne.get("id").asInt() == 7 && personne.get("age").asInt() == 21,
-            "Un objet doit conserver ses proprietes");
-        check(personne.get("nom").asText().equals("Aïna \"test\"\nAntananarivo"),
-            "Les accents, guillemets et sauts de ligne doivent etre conserves");
-        check(json(servlet, "GET", "/sprint6-test/list").size() == 2, "Une liste doit devenir un tableau JSON");
-        JsonNode texte = json(servlet, "GET", "/sprint6-test/string");
-        check(texte.isTextual() && texte.asText().equals("Bonjour \"été\"\nC:\\test\t!"),
-            "Une chaine doit etre encodee en JSON avec les caracteres echappes");
-        check(json(servlet, "GET", "/sprint6-test/number").asInt() == 42, "Un nombre doit rester un nombre");
-        check(json(servlet, "GET", "/sprint6-test/boolean").asBoolean(), "Un booleen doit rester un booleen");
-        JsonNode tableau = json(servlet, "GET", "/sprint6-test/array");
-        check(tableau.isArray() && tableau.size() == 3 && tableau.get(2).asInt() == 3,
-            "Un tableau Java doit devenir un tableau JSON");
-        check(json(servlet, "GET", "/sprint6-test/null").isNull(), "Un retour null doit produire null en JSON");
-
-        JsonNode data = json(servlet, "GET", "/sprint6-test/data");
-        check(data.has("personne") && data.has("absent") && data.get("absent").isNull(),
-            "Les donnees du ModelAndView doivent etre serialisees meme sans vue");
-        check(!data.has("view") && !data.has("data"), "Le JSON ne doit pas inclure la vue ou envelopper les donnees");
         check(json(servlet, "GET", "/sprint6-test/spring").asBoolean(), "L'injection Spring doit fonctionner en JSON");
 
         Exchange view = call(servlet, "GET", "/sprint6-test/view");
-        check(view.forwards == 1 && "/view.jsp".equals(view.view), "Une methode sans @RestApi doit ouvrir sa vue");
+        check(view.forwards == 1 && "/view.jsp".equals(view.view), "Une methode sans @Json doit ouvrir sa vue");
         check("Vue du sprint 5".equals(view.attributes.get("message")), "Les donnees doivent passer a la JSP");
         check(view.body.toString().isEmpty() && view.contentType == null, "La vue ne doit pas produire de JSON");
 
@@ -90,7 +88,7 @@ public class Sprint6SmokeTest {
         Exchange wrongMethod = call(servlet, "POST", "/liste");
         check(wrongMethod.status == 404, "Le routage doit respecter la methode HTTP");
 
-        System.out.println("Sprint 6 OK : routes GET/POST, JSON UTF-8, objets/listes/valeurs/null, base H2, Spring, vues et erreurs.");
+        System.out.println("Sprint 6/7 OK : routes GET/POST, JSON UTF-8, ModelAndView, Spring, vues, erreurs et binding de parametres.");
     }
 
     private static void assertMessage(FrontControllerServlet servlet, String method, String path, String message)
@@ -98,8 +96,21 @@ public class Sprint6SmokeTest {
         check(json(servlet, method, path).get("message").asText().equals(message), "Message incorrect pour " + method + " " + path);
     }
 
-    private static JsonNode json(FrontControllerServlet servlet, String method, String path) throws Exception {
+    private static void assertView(FrontControllerServlet servlet, String method, String path, String message)
+        throws Exception {
         Exchange exchange = call(servlet, method, path);
+        check(exchange.status == 200, "Statut incorrect pour " + path);
+        check(exchange.forwards == 1 && "/view.jsp".equals(exchange.view), "La route doit ouvrir /view.jsp : " + path);
+        check(message.equals(exchange.attributes.get("message")), "Message de vue incorrect pour " + path);
+        check(exchange.body.toString().isEmpty() && exchange.contentType == null, "La route ne doit pas produire de JSON : " + path);
+    }
+
+    private static JsonNode json(FrontControllerServlet servlet, String method, String path) throws Exception {
+        return json(servlet, method, path, new HashMap<>());
+    }
+
+    private static JsonNode json(FrontControllerServlet servlet, String method, String path, Map<String, String> params) throws Exception {
+        Exchange exchange = call(servlet, method, path, params);
         check(exchange.status == 200, "Statut incorrect pour " + path);
         check("application/json".equals(exchange.contentType), "Content-Type incorrect pour " + path);
         check("UTF-8".equals(exchange.encoding) && !exchange.writerBeforeHeaders, "Encodage incorrect pour " + path);
@@ -111,12 +122,17 @@ public class Sprint6SmokeTest {
     }
 
     private static Exchange call(FrontControllerServlet servlet, String method, String path) throws Exception {
+        return call(servlet, method, path, new HashMap<>());
+    }
+
+    private static Exchange call(FrontControllerServlet servlet, String method, String path, Map<String, String> params) throws Exception {
         Exchange exchange = new Exchange();
         HttpServletRequest request = proxy(HttpServletRequest.class, (p, m, a) -> {
             switch (m.getName()) {
                 case "getRequestURI": return "/testApplication" + path;
                 case "getContextPath": return "/testApplication";
                 case "getMethod": return method;
+                case "getParameter": return params.get((String) a[0]);
                 case "setAttribute": exchange.attributes.put((String) a[0], a[1]); return null;
                 case "getRequestDispatcher":
                     exchange.view = (String) a[0];

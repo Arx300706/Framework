@@ -18,6 +18,8 @@ import com.framework.annotation.ApiRest;
 import com.framework.annotation.Json;
 import com.framework.annotation.RestApi;
 import com.framework.mapping.UrlMethode;
+import com.framework.upload.FileBinder;
+import com.framework.upload.MapFile;
 
 import org.springframework.web.context.WebApplicationContext;
 
@@ -96,6 +98,10 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         try {
+            if (req.getCharacterEncoding() == null) {
+                req.setCharacterEncoding("UTF-8");
+            }
+            FileBinder.prepare(req);
             Method methode = trouverMethode(mappingCourant);
             Object resultat = invoquerMethode(methode, req);
 
@@ -109,6 +115,8 @@ public class FrontControllerServlet extends HttpServlet {
                 writeText(res, resultat);
             }
 
+        } catch (FileBinder.UploadException e) {
+            res.sendError(e.getStatus(), e.getMessage());
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'invocation de la methode : " + e.getMessage(), e);
         }
@@ -170,8 +178,8 @@ public class FrontControllerServlet extends HttpServlet {
                     throw new IllegalStateException("Pas de springContext dans le ServletContext");
                 }
                 arguments[i] = springContext;
-            } else if (isSimpleType(type)) {
-                arguments[i] = convertirParametre(req.getParameter(parameter.getName()), type);
+            } else if (isSimpleType(type) || MapFile.class.isAssignableFrom(type)) {
+                arguments[i] = lireValeur(req, parameter.getName(), type);
             } else {
                 arguments[i] = construireObjet(type, req);
             }
@@ -209,14 +217,14 @@ public class FrontControllerServlet extends HttpServlet {
         return meilleur;
     }
 
-    private Object[] construireArgumentsConstructeur(Constructor<?> constructeur, Class<?> type, HttpServletRequest req) {
+    private Object[] construireArgumentsConstructeur(Constructor<?> constructeur, Class<?> type, HttpServletRequest req) throws Exception {
         Parameter[] parameters = constructeur.getParameters();
         Field[] fields = type.getDeclaredFields();
         Object[] arguments = new Object[parameters.length];
 
         for (int i = 0; i < parameters.length; i++) {
             String nomParametre = parameters[i].isNamePresent() ? parameters[i].getName() : nomChamp(fields, i);
-            arguments[i] = convertirParametre(req.getParameter(nomParametre), parameters[i].getType());
+            arguments[i] = lireValeur(req, nomParametre, parameters[i].getType());
         }
 
         return arguments;
@@ -237,9 +245,15 @@ public class FrontControllerServlet extends HttpServlet {
         return "arg" + index;
     }
 
-    private void remplirChamps(Object instance, HttpServletRequest req) throws IllegalAccessException {
+    private void remplirChamps(Object instance, HttpServletRequest req) throws Exception {
         for (Field field : instance.getClass().getDeclaredFields()) {
             if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+
+            if (MapFile.class.isAssignableFrom(field.getType())) {
+                field.setAccessible(true);
+                field.set(instance, lireValeur(req, field.getName(), field.getType()));
                 continue;
             }
 
@@ -251,6 +265,13 @@ public class FrontControllerServlet extends HttpServlet {
             field.setAccessible(true);
             field.set(instance, convertirParametre(valeur, field.getType()));
         }
+    }
+
+    private Object lireValeur(HttpServletRequest req, String name, Class<?> type) throws Exception {
+        if (MapFile.class.isAssignableFrom(type)) {
+            return FileBinder.read(req, name, type.asSubclass(MapFile.class));
+        }
+        return convertirParametre(req.getParameter(name), type);
     }
 
     private boolean isSimpleType(Class<?> type) {

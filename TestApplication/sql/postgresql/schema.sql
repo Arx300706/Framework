@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS personne (
+    id SERIAL PRIMARY KEY,
+    nom VARCHAR(100) NOT NULL,
+    age INT NOT NULL
+);
