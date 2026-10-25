@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.framework.mapping.UrlMethode;
+import com.framework.session.SessionManager;
 import com.framework.util.ClasseUtilitaire;
 
 import jakarta.servlet.ServletContext;
@@ -35,5 +36,14 @@ public class FrontControllerListner implements ServletContextListener {
         context.setAttribute(CONTROLLERS_ATTRIBUTE, controllers);
         context.setAttribute(URL_MAPPINGS_ATTRIBUTE, urlMappings);
         context.setAttribute("springContext", context.getAttribute(SPRING_ROOT));
+        context.setAttribute(SessionManager.ATTRIBUTE, new SessionManager(lireTimeoutSession(context)));
+    }
+
+    private int lireTimeoutSession(ServletContext context) {
+        String valeur = context.getInitParameter("session-timeout");
+        if (valeur == null || valeur.trim().isEmpty()) {
+            return SessionManager.TIMEOUT_MINUTES_PAR_DEFAUT;
+        }
+        return Integer.parseInt(valeur.trim());
     }
 }

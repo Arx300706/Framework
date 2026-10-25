@@ -15,9 +15,14 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.framework.annotation.ApiRest;
+import com.framework.annotation.Autorisation;
 import com.framework.annotation.Json;
 import com.framework.annotation.RestApi;
 import com.framework.mapping.UrlMethode;
+import com.framework.session.Session;
+import com.framework.session.SessionManager;
+import com.framework.upload.FileBinder;
+import com.framework.upload.MapFile;
 
 import org.springframework.web.context.WebApplicationContext;
 
@@ -27,6 +32,7 @@ public class FrontControllerServlet extends HttpServlet {
     List<String> listNomController = new ArrayList<>() ;
     Map<UrlMethode, String> urlMappings = new LinkedHashMap<>() ;
     WebApplicationContext springContext;
+    SessionManager sessionManager;
 
     @SuppressWarnings("unchecked")
     public void init() throws ServletException {
@@ -37,6 +43,7 @@ public class FrontControllerServlet extends HttpServlet {
             Object controllersAttribute = context.getAttribute(FrontControllerListner.CONTROLLERS_ATTRIBUTE);
             Object mappingsAttribute = context.getAttribute(FrontControllerListner.URL_MAPPINGS_ATTRIBUTE);
             Object springContextAttribute = context.getAttribute("springContext");
+            Object sessionAttribute = context.getAttribute(SessionManager.ATTRIBUTE);
 
             if (controllersAttribute instanceof List<?>) {
                 listNomController = (List<String>) controllersAttribute;
@@ -48,6 +55,10 @@ public class FrontControllerServlet extends HttpServlet {
 
             if (springContextAttribute instanceof WebApplicationContext) {
                 springContext = (WebApplicationContext) springContextAttribute;
+            }
+
+            if (sessionAttribute instanceof SessionManager) {
+                sessionManager = (SessionManager) sessionAttribute;
             }
 
         } catch (Exception e) {
@@ -96,8 +107,15 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         try {
+            if (req.getCharacterEncoding() == null) {
+                req.setCharacterEncoding("UTF-8");
+            }
+            FileBinder.prepare(req);
             Method methode = trouverMethode(mappingCourant);
-            Object resultat = invoquerMethode(methode, req);
+            if (!autoriser(methode, req, res)) {
+                return;
+            }
+            Object resultat = invoquerMethode(methode, req, res);
 
             if (isJsonResponse(methode)) {
                 writeJson(res, resultat);
@@ -109,9 +127,35 @@ public class FrontControllerServlet extends HttpServlet {
                 writeText(res, resultat);
             }
 
+        } catch (FileBinder.UploadException e) {
+            res.sendError(e.getStatus(), e.getMessage());
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'invocation de la methode : " + e.getMessage(), e);
         }
+    }
+
+    private boolean autoriser(Method methode, HttpServletRequest req, HttpServletResponse res) throws IOException {
+        Autorisation autorisation = methode.getAnnotation(Autorisation.class);
+        if (autorisation == null) {
+            autorisation = methode.getDeclaringClass().getAnnotation(Autorisation.class);
+        }
+        if (autorisation == null) {
+            return true;
+        }
+        if (sessionManager == null) {
+            throw new IllegalStateException("Pas de SessionManager dans le ServletContext");
+        }
+
+        Session session = sessionManager.sessionCourante(req, res);
+        if (!session.estAuthentifie()) {
+            res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Authentification requise");
+            return false;
+        }
+        if (!autorisation.role().trim().isEmpty() && !session.aLeRole(autorisation.role())) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN, "Role requis : " + autorisation.role());
+            return false;
+        }
+        return true;
     }
 
     private Method trouverMethode(String mappingCourant) throws ClassNotFoundException, NoSuchMethodException {
@@ -127,7 +171,7 @@ public class FrontControllerServlet extends HttpServlet {
         return trouverMethode(classeController, nomMethode);
     }
 
-    private Object invoquerMethode(Method methode, HttpServletRequest req) throws Exception {
+    private Object invoquerMethode(Method methode, HttpServletRequest req, HttpServletResponse res) throws Exception {
         boolean jsonResponse = isJsonResponse(methode);
         String mappingCourant = methode.getDeclaringClass().getName() + "#" + methode.getName();
 
@@ -142,7 +186,7 @@ public class FrontControllerServlet extends HttpServlet {
 
         Object instanceController = methode.getDeclaringClass().getDeclaredConstructor().newInstance();
         methode.setAccessible(true);
-        Object resultat = methode.invoke(instanceController, construireArguments(methode, req));
+        Object resultat = methode.invoke(instanceController, construireArguments(methode, req, res));
 
         if (!jsonResponse && resultat == null) {
             throw new IllegalArgumentException("La methode " + mappingCourant + " a retourne null");
@@ -157,7 +201,7 @@ public class FrontControllerServlet extends HttpServlet {
             || methode.isAnnotationPresent(ApiRest.class);
     }
 
-    private Object[] construireArguments(Method methode, HttpServletRequest req) throws Exception {
+    private Object[] construireArguments(Method methode, HttpServletRequest req, HttpServletResponse res) throws Exception {
         Parameter[] parameters = methode.getParameters();
         Object[] arguments = new Object[parameters.length];
 
@@ -170,8 +214,18 @@ public class FrontControllerServlet extends HttpServlet {
                     throw new IllegalStateException("Pas de springContext dans le ServletContext");
                 }
                 arguments[i] = springContext;
-            } else if (isSimpleType(type)) {
-                arguments[i] = convertirParametre(req.getParameter(parameter.getName()), type);
+            } else if (type.equals(Session.class)) {
+                if (sessionManager == null) {
+                    throw new IllegalStateException("Pas de SessionManager dans le ServletContext");
+                }
+                arguments[i] = sessionManager.sessionCourante(req, res);
+            } else if (type.equals(SessionManager.class)) {
+                if (sessionManager == null) {
+                    throw new IllegalStateException("Pas de SessionManager dans le ServletContext");
+                }
+                arguments[i] = sessionManager;
+            } else if (isSimpleType(type) || MapFile.class.isAssignableFrom(type)) {
+                arguments[i] = lireValeur(req, parameter.getName(), type);
             } else {
                 arguments[i] = construireObjet(type, req);
             }
@@ -209,14 +263,14 @@ public class FrontControllerServlet extends HttpServlet {
         return meilleur;
     }
 
-    private Object[] construireArgumentsConstructeur(Constructor<?> constructeur, Class<?> type, HttpServletRequest req) {
+    private Object[] construireArgumentsConstructeur(Constructor<?> constructeur, Class<?> type, HttpServletRequest req) throws Exception {
         Parameter[] parameters = constructeur.getParameters();
         Field[] fields = type.getDeclaredFields();
         Object[] arguments = new Object[parameters.length];
 
         for (int i = 0; i < parameters.length; i++) {
             String nomParametre = parameters[i].isNamePresent() ? parameters[i].getName() : nomChamp(fields, i);
-            arguments[i] = convertirParametre(req.getParameter(nomParametre), parameters[i].getType());
+            arguments[i] = lireValeur(req, nomParametre, parameters[i].getType());
         }
 
         return arguments;
@@ -237,9 +291,15 @@ public class FrontControllerServlet extends HttpServlet {
         return "arg" + index;
     }
 
-    private void remplirChamps(Object instance, HttpServletRequest req) throws IllegalAccessException {
+    private void remplirChamps(Object instance, HttpServletRequest req) throws Exception {
         for (Field field : instance.getClass().getDeclaredFields()) {
             if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+
+            if (MapFile.class.isAssignableFrom(field.getType())) {
+                field.setAccessible(true);
+                field.set(instance, lireValeur(req, field.getName(), field.getType()));
                 continue;
             }
 
@@ -251,6 +311,13 @@ public class FrontControllerServlet extends HttpServlet {
             field.setAccessible(true);
             field.set(instance, convertirParametre(valeur, field.getType()));
         }
+    }
+
+    private Object lireValeur(HttpServletRequest req, String name, Class<?> type) throws Exception {
+        if (MapFile.class.isAssignableFrom(type)) {
+            return FileBinder.read(req, name, type.asSubclass(MapFile.class));
+        }
+        return convertirParametre(req.getParameter(name), type);
     }
 
     private boolean isSimpleType(Class<?> type) {
