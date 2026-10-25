@@ -27,4 +27,6 @@ fi
 
 if [[ "$suite" == all || "$suite" == sprints || "$suite" == uploads ]]; then
     java -cp "$TEST_BUILD_DIR/classes:$CLASSPATH" com.app.test.Sprint8SmokeTest
+    java -cp "$TEST_BUILD_DIR/classes:$CLASSPATH" com.app.test.Sprint9SmokeTest
+    java -cp "$TEST_BUILD_DIR/classes:$CLASSPATH" com.app.test.Sprint10SmokeTest
 fi
